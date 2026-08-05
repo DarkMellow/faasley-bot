@@ -1,0 +1,18 @@
+# Environment secrets — NEVER commit these
+.env
+
+# Dependencies
+node_modules/
+
+# Database files (quick.db creates these at runtime)
+*.db
+*.sqlite
+database.json
+
+# OS clutter
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
