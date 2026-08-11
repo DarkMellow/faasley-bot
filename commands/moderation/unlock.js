@@ -4,7 +4,7 @@ const {
   PermissionFlagsBits,
   ChannelType,
 } = require('discord.js');
-const { isAuthorized } = require('../../utils/auth');
+const { isAuthorized, getModRoles } = require('../../utils/auth');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -88,6 +88,16 @@ module.exports = {
       await channel.permissionOverwrites.edit(guild.roles.everyone, {
         SendMessages: null,
       });
+
+      // ── Clean up mod role overrides added during lock ───────────────────
+      // Remove the explicit SendMessages:true grants so no stale overwrites remain.
+      const modRoleIds = await getModRoles(guild.id);
+      for (const roleId of modRoleIds) {
+        const role = guild.roles.cache.get(roleId);
+        if (role) {
+          await channel.permissionOverwrites.edit(role, { SendMessages: null });
+        }
+      }
 
       // ── Public embed in unlocked channel ───────────────────────────────
       const publicEmbed = new EmbedBuilder()

@@ -4,7 +4,7 @@ const {
   PermissionFlagsBits,
   ChannelType,
 } = require('discord.js');
-const { isAuthorized } = require('../../utils/auth');
+const { isAuthorized, getModRoles } = require('../../utils/auth');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -84,10 +84,21 @@ module.exports = {
     await interaction.deferReply({ ephemeral: true });
 
     try {
-      // Lock @everyone — only deny SendMessages, preserve all other overwrites
+      // Lock @everyone — deny SendMessages
       await channel.permissionOverwrites.edit(guild.roles.everyone, {
         SendMessages: false,
       });
+
+      // ── Preserve access for whitelisted mod roles ─────────────────────
+      // Explicitly grant SendMessages:true on each mod role so the @everyone
+      // deny doesn't bleed through to moderators via permission inheritance.
+      const modRoleIds = await getModRoles(guild.id);
+      for (const roleId of modRoleIds) {
+        const role = guild.roles.cache.get(roleId);
+        if (role) {
+          await channel.permissionOverwrites.edit(role, { SendMessages: true });
+        }
+      }
 
       // ── Public embed in locked channel ─────────────────────────────────
       const publicEmbed = new EmbedBuilder()

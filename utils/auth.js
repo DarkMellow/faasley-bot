@@ -44,4 +44,59 @@ async function isAuthorized(member, guild) {
   return modRoles.some((id) => member.roles.cache.has(id));
 }
 
-module.exports = { isAuthorized, getModRoles, setModRoles };
+// ── Broadcast Role DB Keys ─────────────────────────────────────────────────
+// broadcastroles_<guildId>  →  string[]  (roles allowed to use /broadcast)
+
+/**
+ * Returns the list of broadcast-whitelisted role IDs for a given guild.
+ *
+ * @param {string} guildId
+ * @returns {Promise<string[]>}
+ */
+async function getBroadcastRoles(guildId) {
+  return (await db.get(`broadcastroles_${guildId}`)) || [];
+}
+
+/**
+ * Saves an updated list of broadcast role IDs for a given guild.
+ *
+ * @param {string} guildId
+ * @param {string[]} roles
+ */
+async function setBroadcastRoles(guildId, roles) {
+  await db.set(`broadcastroles_${guildId}`, roles);
+}
+
+/**
+ * Checks if a member is authorized to use the /broadcast command.
+ *
+ * Requires BOTH conditions to be true:
+ *  1. Member passes isAuthorized() (is a mod / guild owner)
+ *  2. Member holds at least one role from the broadcast whitelist
+ *
+ * Guild owner is exempt from condition 2 — they can always broadcast.
+ *
+ * @param {import('discord.js').GuildMember} member
+ * @param {import('discord.js').Guild} guild
+ * @returns {Promise<boolean>}
+ */
+async function isBroadcastAuthorized(member, guild) {
+  // Guild owner bypasses both checks
+  if (member.id === guild.ownerId) return true;
+
+  // Must pass the base mod check first
+  if (!(await isAuthorized(member, guild))) return false;
+
+  // Must also hold a broadcast-specific role
+  const broadcastRoles = await getBroadcastRoles(guild.id);
+  return broadcastRoles.some((id) => member.roles.cache.has(id));
+}
+
+module.exports = {
+  isAuthorized,
+  getModRoles,
+  setModRoles,
+  getBroadcastRoles,
+  setBroadcastRoles,
+  isBroadcastAuthorized,
+};
