@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const { REST, Routes } = require('discord.js');
 const { readCommands } = require('./handlers/commandHandler');
 

@@ -13,9 +13,10 @@ Every feature implemented in a given phase must be fully fleshed out, edge-case 
 
 ## 2. Environment & Dependencies
 
-* **Packages:** `discord.js` (v14.x), `dotenv`, `quick.db` + `better-sqlite3`. More packages may be added when a feature needs them.
+* **Runtime:** Node.js 22+ (`engines` in package.json, `.node-version`).
+* **Packages:** `discord.js` (v14.x), `dotenv`, `quick.db` with `better-sqlite3` (local) and `mongoose` 6 (production MongoDB driver). More packages may be added when a feature needs them.
 * **Gateway Intents:** `Guilds`, `GuildMessages`, `MessageContent`, `GuildMembers`, `GuildVoiceStates` (voice XP; not privileged).
-* **`.env`:** `BOT_TOKEN`, `CLIENT_ID`, `GUILD_ID` (test server, used by `npm run deploy:guild`).
+* **Environment variables** (see `.env.example`): `BOT_TOKEN`, `CLIENT_ID`, `GUILD_ID` (optional test server for `npm run deploy:guild`), `MONGODB_URI` (production database; unset = local `json.sqlite`), `PORT` (set by the host; starts the health server).
 * **Bot permissions in a server:** Manage Roles, Manage Nicknames, Kick Members, Ban Members, Timeout Members, View Channels, Send Messages, Embed Links, Read Message History (invite permission integer `1099914365958`, scopes `bot applications.commands`). The bot's role must sit above any role it assigns and any member it moderates.
 
 ### Scripts
@@ -25,14 +26,22 @@ Every feature implemented in a given phase must be fully fleshed out, edge-case 
 | `npm run deploy` | Register slash commands globally (up to 1 hour to propagate) |
 | `npm run deploy:guild` | Register slash commands to `GUILD_ID` only (instant, for testing) |
 
+### Hosting (Render + MongoDB Atlas)
+* `render.yaml` defines a free **web service**: build `npm ci && npm run deploy` (so every push re-syncs slash commands), start `npm start`, health check `/health`.
+* `utils/healthServer.js` listens on `$PORT` only when it is set: `/` always returns 200 (uptime-monitor target that keeps the free service awake), `/health` returns 200 once the bot is connected to Discord and 503 before.
+* Data lives in MongoDB (`MONGODB_URI`) because the host's disk is wiped on every deploy. `utils/db.js` connects before login; startup order is health server → database → commands/events → Discord login, and any failure exits with code 1 so the host restarts the process.
+* Step-by-step setup is in README.md.
+
 ---
 
 ## 3. Directory Structure
 
 ```text
-├── index.js                 # Client init, handler bootstrap, crash-safety handlers
+├── index.js                 # Startup: health server → database → handlers → login
 ├── deploy-commands.js       # Slash command registration (global or --guild)
-├── json.sqlite              # quick.db storage (runtime, git-ignored)
+├── render.yaml              # Render Blueprint (free web service)
+├── .env.example             # Documented environment variables
+├── json.sqlite              # Local quick.db storage (development only, git-ignored)
 │
 ├── handlers/
 │   ├── commandHandler.js    # Loads commands/<category>/*.js, applies level metadata
@@ -45,7 +54,8 @@ Every feature implemented in a given phase must be fully fleshed out, edge-case 
 │   └── messageCreate.js     # Prefix commands → commandRunner, AFK logic, easter egg
 │
 ├── utils/
-│   ├── db.js                # The one shared QuickDB instance (key conventions listed)
+│   ├── db.js                # Shared database wrapper: MongoDB or local SQLite (key conventions listed)
+│   ├── healthServer.js      # HTTP / and /health for hosting platforms
 │   ├── permissions.js       # Permission levels
 │   ├── context.js           # CommandContext — one API for slash + prefix
 │   ├── prefixParser.js      # Prefix args parsed from each command's slash definition
@@ -184,7 +194,7 @@ module.exports = {
 Chat and voice are **separate levels** that share one curve.
 
 * **Curve:** going from level L to L+1 costs `50L + 100` XP (100, 150, 200, 250, …). Total XP to reach level L is `25L² + 75L` (level 10 = 3,250 XP; level 20 = 11,500 XP). Levels are derived from XP, never stored.
-* **Storage:** `xp_<guildId>_<userId> = { chatXp, voiceXp, voiceMinutes }`. All updates go through `addXp`, which chains updates per member so rapid messages and voice ticks never overwrite each other.
+* **Storage:** `xp_<guildId>_<userId> = { chatXp, voiceXp, voiceMinutes }` in its own `levels` table/collection, since leaderboards scan every row in it. All updates go through `addXp`, which chains updates per member so rapid messages and voice ticks never overwrite each other.
 
 #### Chat XP
 * Every message earns a random **5–10 XP** — no cooldown, since active members send 1–2 messages a second. Spam is controlled per channel with `xpchannel`. Bots, DMs and prefix-command messages earn nothing. (~15 messages for level 1, ~430 for level 10.)

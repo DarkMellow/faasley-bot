@@ -1,0 +1,31 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# A free web service: the bot opens a small HTTP server on $PORT (utils/healthServer.js)
+# so Render's deploy check passes. Free web services sleep after ~15 minutes without
+# HTTP traffic, so point a free uptime monitor (e.g. UptimeRobot) at the service URL
+# every 5 minutes to keep the bot online.
+#
+# Data lives in MongoDB (MONGODB_URI) because Render's disk is wiped on every deploy.
+# Secrets are marked `sync: false` — Render asks for their values when the Blueprint
+# is first applied; they are never stored in this file.
+
+services:
+  - type: web
+    name: faasle-discord-bot
+    runtime: node
+    plan: free
+    # Installs exact versions from package-lock.json, then re-registers slash
+    # commands with Discord so every push keeps them in sync.
+    buildCommand: npm ci && npm run deploy
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: BOT_TOKEN
+        sync: false
+      - key: CLIENT_ID
+        sync: false
+      - key: MONGODB_URI
+        sync: false

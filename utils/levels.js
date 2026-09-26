@@ -1,5 +1,8 @@
 const db = require('./db');
 
+// XP lives in its own table because leaderboards scan every row in it.
+const xpTable = db.table('levels');
+
 // ── Leveling (chat + voice) ────────────────────────────────────────────────
 // Chat and voice are two separate levels that share one curve.
 //
@@ -11,7 +14,7 @@ const db = require('./db');
 // Level curve: going from level L to L + 1 costs 50L + 100 XP
 // (100, 150, 200, 250, …), so every level needs a little more XP than the last.
 //
-// DB keys:
+// DB keys (xp_ keys live in the "levels" table):
 //   xp_<guildId>_<userId>     →  { chatXp, voiceXp, voiceMinutes }
 //   xpchannels_<guildId>      →  { allowed: [], denied: [] }
 
@@ -52,7 +55,7 @@ function levelFromXp(totalXp) {
  * @returns {Promise<{ chatXp: number, voiceXp: number, voiceMinutes: number }>}
  */
 async function getXp(guildId, userId) {
-  const record = (await db.get(`xp_${guildId}_${userId}`)) ?? {};
+  const record = (await xpTable.get(`xp_${guildId}_${userId}`)) ?? {};
   return {
     chatXp: record.chatXp ?? 0,
     voiceXp: record.voiceXp ?? 0,
@@ -82,7 +85,7 @@ function addXp(guildId, userId, increments) {
       const before = await getXp(guildId, userId);
       const after = { ...before };
       for (const [field, amount] of Object.entries(increments)) after[field] += amount;
-      await db.set(`xp_${guildId}_${userId}`, after);
+      await xpTable.set(`xp_${guildId}_${userId}`, after);
       return { before, after };
     });
 
@@ -114,7 +117,7 @@ function levelUp(before, after, field) {
 async function getLeaderboard(guildId, type = 'chat') {
   const field = XP_FIELDS[type];
   const prefix = `xp_${guildId}_`;
-  const rows = await db.startsWith(prefix);
+  const rows = await xpTable.startsWith(prefix);
   return rows
     .map((row) => ({
       userId: row.id.slice(prefix.length),
