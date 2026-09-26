@@ -1,10 +1,11 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { setAfk, getAfk } = require('../../utils/afk');
+const { warnEmbed, mutedEmbed } = require('../../utils/embeds');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('afk')
-    .setDescription('💤 Set yourself as AFK — the bot will notify people who mention you.')
+    .setDescription('💤 Go AFK — anyone who mentions you is told you are away.')
     .addStringOption((opt) =>
       opt
         .setName('reason')
@@ -12,76 +13,62 @@ module.exports = {
         .setRequired(false)
         .setMaxLength(200)
     ),
+  level: 'everyone',
 
   /**
    * Marks the executor as AFK in quick.db.
    * Optionally prepends [AFK] to their server nickname if the bot can manage it.
    *
-   * @param {import('discord.js').ChatInputCommandInteraction} interaction
+   * @param {import('../../utils/context').CommandContext} ctx
    */
-  async execute(interaction) {
-    const { guild, member } = interaction;
-    const reason = interaction.options.getString('reason') || 'AFK';
+  async execute(ctx) {
+    const { guild, member } = ctx;
+    const reason = ctx.options.getString('reason') || 'AFK';
 
     // ── Already AFK check ────────────────────────────────────────────────
     const existing = await getAfk(guild.id, member.id);
     if (existing) {
-      return interaction.reply({
+      return ctx.reply({
         embeds: [
-          new EmbedBuilder()
-            .setColor(0xffa502)
-            .setTitle('⚠️ Already AFK')
-            .setDescription(
-              `You're already marked as AFK with reason: **${existing.reason}**\n` +
-              `Use this command again after returning to clear it.`
-            )
-            .setTimestamp(),
+          warnEmbed(
+            '⚠️ Already AFK',
+            `You're already marked as AFK with reason: **${existing.reason}**\n` +
+            `Send any message to clear it, then set a new one.`
+          ),
         ],
         ephemeral: true,
       });
     }
 
     // ── Nickname Sync (optional) ─────────────────────────────────────────
-    // Prepend [AFK] to the member's display name only if:
-    //   a) Bot has ManageNicknames permission in the guild
-    //   b) The member's highest role is below the bot's highest role (can't change nick of higher/equal roles)
-    //   c) The member is not the server owner (owners can't have nick changed by bots)
-    let originalNickname = null;
-    const botMember = guild.members.me;
-    const canManageNick =
-      botMember.permissions.has(PermissionFlagsBits.ManageNicknames) &&
-      member.id !== guild.ownerId &&
-      member.roles.highest.position < botMember.roles.highest.position;
+    // member.manageable covers the role hierarchy and the server owner.
+    const originalNickname = member.nickname; // null if using username
+    let nicknameChanged = false;
 
-    if (canManageNick) {
-      originalNickname = member.nickname; // null if using username
-      const displayName = member.displayName;
-
-      // Only prepend if not already prefixed
-      if (!displayName.startsWith('[AFK]')) {
-        try {
-          await member.setNickname(`[AFK] ${displayName}`.slice(0, 32)); // Discord nick limit: 32 chars
-        } catch {
-          // Silently ignore — nickname change is optional
-        }
+    if (
+      member.manageable &&
+      guild.members.me.permissions.has(PermissionFlagsBits.ManageNicknames) &&
+      !member.displayName.startsWith('[AFK]')
+    ) {
+      try {
+        await member.setNickname(`[AFK] ${member.displayName}`.slice(0, 32)); // Discord nick limit: 32 chars
+        nicknameChanged = true;
+      } catch {
+        // Nickname change is optional
       }
     }
 
     // ── Save AFK state ───────────────────────────────────────────────────
-    await setAfk(guild.id, member.id, reason, originalNickname);
+    await setAfk(guild.id, member.id, { reason, originalNickname, nicknameChanged });
 
-    await interaction.reply({
+    await ctx.reply({
       embeds: [
-        new EmbedBuilder()
-          .setColor(0x747d8c)
-          .setTitle('💤 You\'re now AFK')
-          .setDescription(
-            `**Reason:** ${reason}\n\n` +
-            `I'll let people know you're away if they mention you.\n` +
-            `Send any message when you're back and I'll remove your AFK status automatically.`
-          )
-          .setFooter({ text: `AFK set in ${guild.name}` })
-          .setTimestamp(),
+        mutedEmbed(
+          '💤 You\'re now AFK',
+          `**Reason:** ${reason}\n\n` +
+          `I'll let people know you're away if they mention you.\n` +
+          `Send any message when you're back and I'll remove your AFK status automatically.`
+        ).setFooter({ text: `AFK set in ${guild.name}` }),
       ],
     });
   },

@@ -1,7 +1,8 @@
-const { ActivityType } = require('discord.js');
+const { ActivityType, Events } = require('discord.js');
+const { startVoiceXp } = require('../utils/voiceXp');
 
 module.exports = {
-  name: 'ready',
+  name: Events.ClientReady,
   once: true,
 
   /**
@@ -19,11 +20,13 @@ module.exports = {
     client.user.setPresence({
       activities: [
         {
-          name: 'over the server 👀',
+          name: '/help  •  ?help',
           type: ActivityType.Watching,
         },
       ],
       status: 'online',
     });
+
+    startVoiceXp(client);
   },
 };

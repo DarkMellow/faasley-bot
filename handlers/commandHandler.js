@@ -1,19 +1,23 @@
 const fs = require('fs');
 const path = require('path');
+const { InteractionContextType } = require('discord.js');
+const { LEVELS, LEVEL_INFO } = require('../utils/permissions');
 
 /**
- * Recursively loads all command files from the commands/ directory and
- * registers them onto client.commands keyed by their name.
+ * Reads every command module from commands/<category>/*.js and normalises it:
+ *  - `category` is set from the folder name
+ *  - `level` defaults to "everyone"
+ *  - the slash definition gets Discord-side default member permissions for
+ *    its level (so the command is hidden from members who can't use it) and
+ *    is restricted to guilds
  *
- * @param {import('discord.js').Client} client
+ * @returns {object[]} Command modules
  */
-function loadCommands(client) {
+function readCommands() {
   const commandsPath = path.join(__dirname, '..', 'commands');
-  const categories = fs.readdirSync(commandsPath);
+  const commands = [];
 
-  let loaded = 0;
-
-  for (const category of categories) {
+  for (const category of fs.readdirSync(commandsPath)) {
     const categoryPath = path.join(commandsPath, category);
 
     // Only process directories (e.g. moderation/, utility/)
@@ -24,8 +28,7 @@ function loadCommands(client) {
       .filter((file) => file.endsWith('.js'));
 
     for (const file of commandFiles) {
-      const filePath = path.join(categoryPath, file);
-      const command = require(filePath);
+      const command = require(path.join(categoryPath, file));
 
       if (!command.data || !command.execute) {
         console.warn(
@@ -34,12 +37,33 @@ function loadCommands(client) {
         continue;
       }
 
-      client.commands.set(command.data.name, command);
-      loaded++;
+      command.category = category;
+      command.level ??= 'everyone';
+      if (!(command.level in LEVELS)) {
+        throw new Error(`[CommandHandler] ${file} has unknown level "${command.level}".`);
+      }
+
+      const permission = LEVEL_INFO[command.level].permission;
+      if (permission) command.data.setDefaultMemberPermissions(permission);
+      command.data.setContexts(InteractionContextType.Guild);
+
+      commands.push(command);
     }
   }
 
-  console.log(`[CommandHandler] ✅  Loaded ${loaded} command(s).`);
+  return commands;
 }
 
-module.exports = { loadCommands };
+/**
+ * Registers all commands onto client.commands keyed by their name.
+ *
+ * @param {import('discord.js').Client} client
+ */
+function loadCommands(client) {
+  for (const command of readCommands()) {
+    client.commands.set(command.data.name, command);
+  }
+  console.log(`[CommandHandler] ✅  Loaded ${client.commands.size} command(s).`);
+}
+
+module.exports = { readCommands, loadCommands };

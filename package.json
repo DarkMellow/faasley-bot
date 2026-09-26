@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "deploy": "node deploy-commands.js"
+    "deploy": "node deploy-commands.js",
+    "deploy:guild": "node deploy-commands.js --guild"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

@@ -2,208 +2,122 @@ const {
   SlashCommandBuilder,
   EmbedBuilder,
   ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
+  StringSelectMenuBuilder,
 } = require('discord.js');
+const { LEVEL_INFO } = require('../../utils/permissions');
+const { formatUsage } = require('../../utils/prefixParser');
+const { COLORS } = require('../../utils/embeds');
 
-// ── Page Definitions ───────────────────────────────────────────────────────
+// ── Categories ─────────────────────────────────────────────────────────────
+// Pages are generated from the loaded commands, so help never goes stale.
+// A category is the command's folder name under commands/. `order` lists
+// related commands together; commands not listed are shown after them.
+const CATEGORIES = {
+  channels:   { label: 'Channels',   emoji: '🔒', color: COLORS.info,    order: ['lock', 'unlock', 'hide', 'unhide'] },
+  moderation: {
+    label: 'Moderation', emoji: '🔨', color: COLORS.error,
+    order: ['warn', 'warnings', 'clearwarns', 'timeout', 'untimeout', 'kick', 'ban', 'unban', 'role'],
+  },
+  levels:     { label: 'Levels',     emoji: '📊', color: COLORS.info,    order: ['rank', 'leaderboard', 'xpchannel'] },
+  utility:    { label: 'Utility',    emoji: '🛠️', color: COLORS.success, order: ['afk', 'help'] },
+  admin:      { label: 'Admin',      emoji: '⚙️', color: COLORS.warn,    order: ['config', 'broadcast'] },
+};
 
-/**
- * Returns the Overview (landing) embed shown when /help is first run.
- */
-function buildOverviewEmbed() {
-  return new EmbedBuilder()
-    .setColor(0x5352ed)
-    .setTitle('📖  Faasle Bot — Command Reference')
+function commandsIn(client, category) {
+  const rank = (name) => {
+    const i = CATEGORIES[category].order.indexOf(name);
+    return i === -1 ? Infinity : i;
+  };
+  return [...client.commands.filter((c) => c.category === category).values()]
+    .sort((a, b) => rank(a.data.name) - rank(b.data.name));
+}
+
+const levelText = (level) => `**${LEVEL_INFO[level].label}** (${LEVEL_INFO[level].requirement})`;
+
+function buildOverviewEmbed(client, prefix) {
+  const embed = new EmbedBuilder()
+    .setColor(COLORS.info)
+    .setTitle('📖  Faasle Bot — Help')
     .setDescription(
-      'Welcome! Use the buttons below to browse commands by category.\n\n' +
-      '> 🔨 **Moderation** — Channel lock, hide, and role management\n' +
-      '> 🛠️ **Utility** — AFK system and broadcast messaging\n' +
-      '> ⚙️ **Admin Setup** — Configure bot permissions for this server'
+      `Use any command with \`/\` or the prefix \`${prefix}\`.\n` +
+      'Pick a category from the menu below to see what each command does.'
     )
-    .addFields({
-      name: '🔑 Permission Tiers',
-      value:
-        '`Everyone` — No role needed\n' +
-        '`Mod Role` — Requires a whitelisted mod role (`/setmodrole`)\n' +
-        '`Mod + Broadcast` — Requires both a mod role **and** a broadcast role (`/setbroadcastrole`)\n' +
-        '`Administrator` — Requires the Discord **Administrator** permission\n' +
-        '`Server Owner` — Always bypasses all role checks',
-    })
-    .setFooter({ text: 'Faasle Bot  •  Select a category below' })
-    .setTimestamp();
+    .setFooter({ text: 'Faasle Bot' });
+
+  for (const [category, info] of Object.entries(CATEGORIES)) {
+    const names = commandsIn(client, category).map((c) => `\`${c.data.name}\``).join('  ');
+    if (names) embed.addFields({ name: `${info.emoji}  ${info.label}`, value: names });
+  }
+
+  return embed;
 }
+
+function buildCategoryEmbed(client, category, prefix) {
+  const info = CATEGORIES[category];
+  const commands = commandsIn(client, category);
+
+  // Show "who can use" once per page when every command shares a level.
+  const levels = new Set(commands.map((c) => c.level));
+  const sharedLevel = levels.size === 1 ? commands[0].level : null;
+
+  const entries = commands.map((command) => {
+    const json = command.data.toJSON();
+    // Long subcommand lists read better one per line.
+    const usageLines = formatUsage(prefix, json).map((line) => `\`${line}\``);
+    const usage = usageLines.join(usageLines.length > 2 ? '\n' : '  ·  ');
+    const tag = sharedLevel ? '' : `  —  ${LEVEL_INFO[command.level].label}`;
+    return `${usage}${tag}\n${json.description}`;
+  });
+
+  if (category === 'utility') {
+    entries.push('👋  Say `hello` in chat and the bot will greet you back.');
+  }
+
+  let description = entries.join('\n\n');
+  if (sharedLevel) {
+    description += `\n\n**Who can use:** ${levelText(sharedLevel)}`;
+  } else {
+    const present = Object.keys(LEVEL_INFO).filter((level) => levels.has(level));
+    description += `\n\n**Who can use:** the level shown next to each command\n` +
+      present.map((level) => `• ${levelText(level)}`).join('\n');
+  }
+
+  return new EmbedBuilder()
+    .setColor(info.color)
+    .setTitle(`${info.emoji}  ${info.label}`)
+    .setDescription(description)
+    .setFooter({ text: '<required>   [optional]' });
+}
+
+const MENU_ID = 'help_menu';
 
 /**
- * Returns the Moderation commands embed.
+ * A dropdown with Overview plus one entry per category. A dropdown (rather
+ * than buttons) has room for up to 25 pages.
  */
-function buildModerationEmbed() {
-  return new EmbedBuilder()
-    .setColor(0xff4757)
-    .setTitle('🔨  Moderation Commands')
-    .setDescription('All moderation commands require a **Mod Role** (or Server Owner).')
-    .addFields(
-      {
-        name: '🔒  `/lock`',
-        value:
-          'Locks the current channel — prevents `@everyone` from sending messages.\n' +
-          'Whitelisted mod roles automatically keep their send access.\n' +
-          '**Requires:** Mod Role',
-      },
-      {
-        name: '🔓  `/unlock`',
-        value:
-          'Unlocks the current channel — restores `@everyone` send permissions.\n' +
-          'Cleans up mod role overrides set during lock.\n' +
-          '**Requires:** Mod Role',
-      },
-      {
-        name: '🙈  `/hide`',
-        value:
-          'Hides the current channel from `@everyone` (they can\'t see it in the channel list).\n' +
-          'Whitelisted mod roles automatically retain visibility so they can unhide it.\n' +
-          '**Requires:** Mod Role',
-      },
-      {
-        name: '👁️  `/unhide`',
-        value:
-          'Restores `@everyone` visibility to the current channel.\n' +
-          'Cleans up mod role visibility overrides set during hide.\n' +
-          '**Requires:** Mod Role',
-      },
-      {
-        name: '🎭  `/role <target> <role> <action>`',
-        value:
-          'Adds or removes a role from a server member with full hierarchy validation.\n' +
-          '`action` → `Add` or `Remove`\n' +
-          'Rejects: managed roles, roles above your position, members above your rank.\n' +
-          '**Requires:** Mod Role  •  Bot needs `Manage Roles`',
-      }
-    )
-    .setFooter({ text: 'Faasle Bot  •  Moderation' })
-    .setTimestamp();
-}
+function buildNavRow(activePage, disabled = false) {
+  const pages = [['overview', { label: 'Overview', emoji: '📖' }], ...Object.entries(CATEGORIES)];
 
-/**
- * Returns the Utility commands embed.
- */
-function buildUtilityEmbed() {
-  return new EmbedBuilder()
-    .setColor(0x2ed573)
-    .setTitle('🛠️  Utility Commands')
-    .addFields(
-      {
-        name: '💤  `/afk [reason]`',
-        value:
-          'Marks you as AFK in this server.\n' +
-          '• `reason` is optional and defaults to `"AFK"`.\n' +
-          '• If the bot can manage your nickname, it will prepend `[AFK]` to your display name.\n' +
-          '• Anyone who mentions you while you\'re AFK will be notified automatically.\n' +
-          '• Send **any message** to automatically clear your AFK status.\n' +
-          '**Requires:** Anyone',
-      },
-      {
-        name: '📣  `/broadcast <message> [role]`',
-        value:
-          'Sends a DM to members of this server.\n' +
-          '• If `role` is provided → only DMs members with that role (no confirmation needed).\n' +
-          '• If `role` is omitted → shows a ⚠️ confirmation before DMing **everyone**.\n' +
-          '• Members with DMs disabled are skipped — a delivery report is shown at the end.\n' +
-          '**Requires:** Mod Role **+** Broadcast Role  •  *Both are required*',
-      },
-      {
-        name: '👋  Say `hello` in chat',
-        value:
-          'A hidden easter egg — type the word `hello` in any channel and the bot will ping you back with a cute greeting.\n' +
-          '**Requires:** Anyone',
-      }
-    )
-    .setFooter({ text: 'Faasle Bot  •  Utility' })
-    .setTimestamp();
-}
-
-/**
- * Returns the Admin Setup commands embed.
- */
-function buildAdminEmbed() {
-  return new EmbedBuilder()
-    .setColor(0xffa502)
-    .setTitle('⚙️  Admin Setup Commands')
-    .setDescription(
-      'These commands configure the bot for your server.\n' +
-      'All require the Discord **Administrator** permission.'
-    )
-    .addFields(
-      {
-        name: '🛡️  `/setmodrole add | remove | list [role]`',
-        value:
-          'Manages the **mod role whitelist** — roles in this list can use `/lock`, `/unlock`, `/hide`, `/unhide`, and `/role`.\n' +
-          '`add <role>` → Whitelist a role\n' +
-          '`remove <role>` → Remove a role from the whitelist\n' +
-          '`list` → Show all currently whitelisted roles\n' +
-          '**Requires:** Administrator',
-      },
-      {
-        name: '📡  `/setbroadcastrole add | remove | list [role]`',
-        value:
-          'Manages the **broadcast role whitelist** — roles in this list (who *also* have a mod role) can use `/broadcast`.\n' +
-          '`add <role>` → Whitelist a role for broadcasting\n' +
-          '`remove <role>` → Remove a broadcast role\n' +
-          '`list` → Show all broadcast-whitelisted roles\n' +
-          '**Requires:** Administrator',
-      },
-      {
-        name: '📋  Quick Setup Guide',
-        value:
-          '```\n' +
-          '1. /setmodrole add @YourModRole\n' +
-          '2. /setbroadcastrole add @YourModRole\n' +
-          '3. Done! Mods can now lock, hide, manage roles, and broadcast.\n' +
-          '```',
-      }
-    )
-    .setFooter({ text: 'Faasle Bot  •  Admin Setup' })
-    .setTimestamp();
-}
-
-// ── Button Row ─────────────────────────────────────────────────────────────
-
-function buildNavRow(activePage) {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('help_overview')
-      .setLabel('Overview')
-      .setEmoji('📖')
-      .setStyle(activePage === 'overview' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-      .setDisabled(activePage === 'overview'),
-    new ButtonBuilder()
-      .setCustomId('help_moderation')
-      .setLabel('Moderation')
-      .setEmoji('🔨')
-      .setStyle(activePage === 'moderation' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-      .setDisabled(activePage === 'moderation'),
-    new ButtonBuilder()
-      .setCustomId('help_utility')
-      .setLabel('Utility')
-      .setEmoji('🛠️')
-      .setStyle(activePage === 'utility' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-      .setDisabled(activePage === 'utility'),
-    new ButtonBuilder()
-      .setCustomId('help_admin')
-      .setLabel('Admin Setup')
-      .setEmoji('⚙️')
-      .setStyle(activePage === 'admin' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-      .setDisabled(activePage === 'admin'),
+    new StringSelectMenuBuilder()
+      .setCustomId(MENU_ID)
+      .setPlaceholder(disabled ? 'Help menu expired — run help again' : 'Choose a category…')
+      .setDisabled(disabled)
+      .addOptions(
+        pages.map(([page, info]) => ({
+          label: info.label,
+          value: page,
+          emoji: info.emoji,
+          default: page === activePage && !disabled,
+        }))
+      )
   );
 }
 
-function getPageEmbed(page) {
-  switch (page) {
-    case 'moderation': return buildModerationEmbed();
-    case 'utility':    return buildUtilityEmbed();
-    case 'admin':      return buildAdminEmbed();
-    default:           return buildOverviewEmbed();
-  }
+function getPageEmbed(client, page, prefix) {
+  return page in CATEGORIES
+    ? buildCategoryEmbed(client, page, prefix)
+    : buildOverviewEmbed(client, prefix);
 }
 
 // ── Command ────────────────────────────────────────────────────────────────
@@ -211,48 +125,41 @@ function getPageEmbed(page) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('help')
-    .setDescription('📖 Browse all Faasle Bot commands and learn how to use them.'),
+    .setDescription('📖 Show all commands and how to use them.'),
+  level: 'everyone',
 
   /**
-   * Sends a paginated help menu — anyone can use this, no role required.
-   * Navigation buttons switch between Overview, Moderation, Utility, and Admin pages.
-   * The collector listens for 5 minutes before disabling the buttons.
+   * Sends a paginated help menu. A dropdown switches between Overview and
+   * each category. The dropdown is disabled after 5 minutes.
    *
-   * @param {import('discord.js').ChatInputCommandInteraction} interaction
+   * @param {import('../../utils/context').CommandContext} ctx
    */
-  async execute(interaction) {
-    let currentPage = 'overview';
+  async execute(ctx) {
+    const { client, prefix } = ctx;
 
-    const response = await interaction.reply({
-      embeds: [getPageEmbed(currentPage)],
-      components: [buildNavRow(currentPage)],
+    const response = await ctx.reply({
+      embeds: [getPageEmbed(client, 'overview', prefix)],
+      components: [buildNavRow('overview')],
       ephemeral: true,
     });
 
-    // ── Button collector (5 minute window) ────────────────────────────────
     const collector = response.createMessageComponentCollector({
-      filter: (i) => i.user.id === interaction.user.id,
-      time: 5 * 60 * 1000, // 5 minutes
+      filter: (i) => i.user.id === ctx.user.id && i.customId === MENU_ID,
+      time: 5 * 60 * 1000,
     });
 
-    collector.on('collect', async (btnInteraction) => {
-      currentPage = btnInteraction.customId.replace('help_', '');
-      await btnInteraction.update({
-        embeds: [getPageEmbed(currentPage)],
-        components: [buildNavRow(currentPage)],
-      });
+    collector.on('collect', async (menu) => {
+      const page = menu.values[0];
+      await menu
+        .update({
+          embeds: [getPageEmbed(client, page, prefix)],
+          components: [buildNavRow(page)],
+        })
+        .catch(() => {});
     });
 
     collector.on('end', async () => {
-      // Disable all buttons when the session expires
-      const disabledRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('help_overview').setLabel('Overview').setEmoji('📖').setStyle(ButtonStyle.Secondary).setDisabled(true),
-        new ButtonBuilder().setCustomId('help_moderation').setLabel('Moderation').setEmoji('🔨').setStyle(ButtonStyle.Secondary).setDisabled(true),
-        new ButtonBuilder().setCustomId('help_utility').setLabel('Utility').setEmoji('🛠️').setStyle(ButtonStyle.Secondary).setDisabled(true),
-        new ButtonBuilder().setCustomId('help_admin').setLabel('Admin Setup').setEmoji('⚙️').setStyle(ButtonStyle.Secondary).setDisabled(true),
-      );
-
-      await interaction.editReply({ components: [disabledRow] }).catch(() => {});
+      await response.edit({ components: [buildNavRow(null, true)] }).catch(() => {});
     });
   },
 };

@@ -4,6 +4,7 @@ const path = require('path');
 /**
  * Reads every file in the events/ directory and registers it on the client
  * using client.once for one-time events (once: true) and client.on for repeating ones.
+ * Handler errors are caught and logged so a single failure can't crash the bot.
  *
  * @param {import('discord.js').Client} client
  */
@@ -26,10 +27,18 @@ function loadEvents(client) {
       continue;
     }
 
+    const listener = async (...args) => {
+      try {
+        await event.execute(...args, client);
+      } catch (error) {
+        console.error(`[EventHandler] ❌  Error in ${event.name} handler:`, error);
+      }
+    };
+
     if (event.once) {
-      client.once(event.name, (...args) => event.execute(...args, client));
+      client.once(event.name, listener);
     } else {
-      client.on(event.name, (...args) => event.execute(...args, client));
+      client.on(event.name, listener);
     }
 
     loaded++;
